@@ -575,6 +575,35 @@ class TestLinalg(TestCase):
             with self.assertRaisesRegex(RuntimeError, r'parameter `driver` should be one of \(gels, gelsy, gelsd, gelss\)'):
                 torch.linalg.lstsq(a, b, driver='fictitious_driver')
 
+    @onlyCPU
+    @skipCPUIfNoLapack
+    @parametrize("api_name", ["torch.linalg.lstsq", "torch.linalg.svd"])
+    def test_non_finite_error_code(self, device, api_name):
+        # Regression test for https://github.com/pytorch/pytorch/issues/149724:
+        # Lapack reports non-finite input as info == -4, which used to fall through
+        # to an internal assert blaming the implementation rather than the input.
+        # Only svd was mapped; lstsq reaches the same status and is checked here to
+        # keep both mappings from regressing.
+        info = torch.tensor(-4, dtype=torch.int32, device=device)
+        with self.assertRaisesRegex(torch.linalg.LinAlgError, "contained non-finite values"):
+            torch._linalg_check_errors(info, api_name, is_matrix=True)
+
+    @onlyCPU
+    @skipCPUIfNoLapack
+    @dtypes(*floating_and_complex_types())
+    def test_lstsq_non_finite_input(self, device, dtype):
+        # Regression test for https://github.com/pytorch/pytorch/issues/149724:
+        # gelsd reports a non-finite entry through a negative info, which used to
+        # surface as an internal assert. Which status a backend returns depends on
+        # the input as well as the Lapack build -- on some configurations a random
+        # matrix comes back with a positive (rank-deficient) status -- so this asserts only
+        # that the failure is a LinAlgError rather than an internal assert.
+        A = torch.eye(3, dtype=dtype, device=device)
+        A[0, 0] = float("nan")
+        B = make_tensor((3, 2), dtype=dtype, device=device)
+        with self.assertRaises(torch.linalg.LinAlgError):
+            torch.linalg.lstsq(A, B, driver="gelsd")
+
 
     @skipCUDAIfNoCusolver
     @skipCPUIfNoLapack
@@ -9435,6 +9464,30 @@ scipy_lobpcg  | {eq_err_scipy:10.2e}  | {eq_err_general_scipy:10.2e}  | {iters2:
         bad[0] = -(n + 1)
         with self.assertRaisesRegex(RuntimeError, r"\|pivot\| <= LD\.size\(-2\)"):
             torch.linalg.ldl_solve(LD, bad, B, hermitian=hermitian)
+
+
+    @onlyCPU
+    @skipCPUIfNoLapack
+    @dtypes(*floating_and_complex_types())
+    def test_ldl_factor_cpu_errors(self, device, dtype):
+        # Regression test for https://github.com/pytorch/pytorch/issues/149724:
+        # a singular D reached _linalg_check_errors with no matching branch, so
+        # an ordinary singular input raised an internal assert telling the user
+        # to report a bug to PyTorch instead of naming the zero diagonal entry.
+        hermitian = dtype.is_complex
+        n = 3
+        A = torch.eye(n, dtype=dtype, device=device)
+        A[-1, -1] = 0
+
+        with self.assertRaisesRegex(RuntimeError, r"D\[3,3\] is zero"):
+            torch.linalg.ldl_factor(A, hermitian=hermitian)
+
+        with self.assertRaisesRegex(RuntimeError, r"D\[3,3\] is zero"):
+            torch.linalg.ldl_factor_ex(A, hermitian=hermitian, check_errors=True)
+
+        # check_errors=False must keep reporting through info rather than raising.
+        _, _, info = torch.linalg.ldl_factor_ex(A, hermitian=hermitian)
+        self.assertEqual(info, torch.tensor(n, dtype=torch.int32, device=device))
 
     def test_permute_matmul(self):
         a = torch.ones([2, 5, 24, 24])

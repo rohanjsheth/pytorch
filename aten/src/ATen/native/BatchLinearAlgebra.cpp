@@ -1643,7 +1643,7 @@ void _linalg_check_errors(
     // MKL 2022.0+ uses the Reference LAPACK 3.10+.
     // Older version of MKL and OpenBLAS follow the old behavior (return `info` > 0).
     // Here we check for the case where `info` is -4 and raise an error
-    if (api_name.find("svd") != api_name.npos) {
+    if (api_name.find("svd") != api_name.npos || api_name.find("lstsq") != api_name.npos) {
       TORCH_CHECK_LINALG(info != -4, api_name, batch_str,
           ": The algorithm failed to converge because the input matrix contained non-finite values.");
     }
@@ -1675,6 +1675,10 @@ void _linalg_check_errors(
           ": U[", info, ",", info, "] is zero and using it on lu_solve would result in a division by zero. "
           "If you still want to perform the factorization, consider calling linalg.lu(A, pivot) or "
           "linalg.lu_factor_ex(A, pivot)");
+    } else if (api_name.find("ldl_factor") != api_name.npos) {
+      TORCH_CHECK(false, api_name, batch_str,
+          ": D[", info, ",", info, "] is zero and using it on ldl_solve would result in a division by zero. "
+          "If you still want to perform the factorization, consider calling linalg.ldl_factor_ex(A)");
     } else {
       TORCH_INTERNAL_ASSERT(false, api_name, ": Unknown error code: ", info, ".");
     }
